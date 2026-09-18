@@ -43,3 +43,21 @@ Type a line and press Enter, then Ctrl+D. Watch it show up in:
 ```bash
 docker compose logs taskmanager
 ```
+
+## Phase 1: event generator
+
+Streams CloudTrail-shaped `RunInstances`/`TerminateInstances` events into the
+topic, with ~10% of events backdated 5-20s and ~2% backdated 60-179s to
+simulate real out-of-order/late delivery.
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r generator/requirements.txt
+python generator/generate_events.py --duration 30
+```
+
+Deviation from the plan: `kafka-python` (the plan's suggested library) does
+not import on current Python (3.12+) due to an unmaintained `six` vendoring
+bug. Used the drop-in community fork `kafka-python-ng` instead.
+
+Watch events arrive in Flink with `docker compose logs -f taskmanager`.
