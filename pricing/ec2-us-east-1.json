@@ -1,0 +1,13 @@
+{
+  "_comment": "Approximate on-demand Linux hourly rates, us-east-1, as of 2024. Not live pricing.",
+  "t3.micro": 0.0104,
+  "t3.medium": 0.0416,
+  "m5.large": 0.096,
+  "m5.xlarge": 0.192,
+  "m5.2xlarge": 0.384,
+  "c5.large": 0.085,
+  "c5.xlarge": 0.17,
+  "c5.2xlarge": 0.34,
+  "r5.large": 0.126,
+  "r5.xlarge": 0.252
+}

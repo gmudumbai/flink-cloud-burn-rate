@@ -41,6 +41,19 @@
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
     </dependency>
+    <!-- Pin these explicitly: flink-connector-kafka transitively pulls an older
+         jackson-core/annotations that clashes with jackson-databind above at runtime
+         once everything is shaded into one jar (NoSuchMethodError on JsonParser). -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-core</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-annotations</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
 
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -52,6 +65,15 @@
 
   <build>
     <finalName>flink-cloud-burn-rate</finalName>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+      </resource>
+      <resource>
+        <directory>../pricing</directory>
+        <targetPath>pricing</targetPath>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
