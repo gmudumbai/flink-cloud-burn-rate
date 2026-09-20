@@ -90,3 +90,34 @@ generator is still running — the fresh job has no memory of instances
 started before the restart, so terminations for them are routed to
 `UNMATCHED_TERMINATION` lines instead of guessing a rate to subtract. This
 is a preview of why Phase 4's checkpointing matters.
+
+## Phase 3: event time, watermarks, windows, late data
+
+Watermarks are now assigned from each event's `eventTime` field
+(`WatermarkStrategy.forBoundedOutOfOrderness`, with `.withIdleness` so a
+quiet partition doesn't stall the minimum watermark). `BurnRateUpdate`
+deltas are aggregated per account in 1-minute tumbling event-time windows,
+then fed into `RunningRateFunction`, which keeps a running committed
+hourly rate per account. Events arriving past the allowed lateness are
+routed to a `LATE:`-prefixed side output instead of being silently dropped.
+
+Configurable via env vars: `WATERMARK_BOUND_SECONDS` (default 20),
+`ALLOWED_LATENESS_SECONDS` (default 30).
+
+Rebuild and resubmit as before. Run the generator for at least a couple of
+minutes (`--duration 150`) so more than one 1-minute window actually
+closes:
+
+```bash
+python generator/generate_events.py --duration 150
+```
+
+Watch `docker compose logs -f taskmanager` for lines like:
+
+```
+account=100000000000 windowEnd=2026-09-20T00:26:00Z runningRate=$0.4324/hr
+LATE: +0.3400 account=100000000000 team=platform
+```
+
+In the Flink UI, open the job → the window/aggregate operator → its
+"Watermarks" tab to see per-subtask watermarks advancing over time.
