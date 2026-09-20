@@ -23,21 +23,37 @@ services:
       timeout: 5s
       retries: 10
 
+  # The flink images run as uid 9999, but a fresh named volume is created
+  # owned by root — without this, checkpointing fails on first run with
+  # "Failed to create directory for shared state" (permission denied).
+  checkpoint-perms:
+    image: flink:1.20.5-java17
+    user: "0:0"
+    # Bypass docker-entrypoint.sh: it always re-execs via `gosu flink`, which
+    # would defeat the chown below (root -> flink -> "Operation not permitted").
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["chown -R flink:flink /tmp/flink-checkpoints"]
+    volumes:
+      - flink-checkpoints:/tmp/flink-checkpoints
+
   jobmanager:
     image: flink:1.20.5-java17
     container_name: jobmanager
     command: jobmanager
     ports:
-      - "8081:8081"
+      - "8082:8081"
     environment:
       - |
         FLINK_PROPERTIES=
         jobmanager.rpc.address: jobmanager
     volumes:
       - ./flink-job/target:/opt/flink/usrlib
+      - flink-checkpoints:/tmp/flink-checkpoints
     depends_on:
       redpanda:
         condition: service_healthy
+      checkpoint-perms:
+        condition: service_completed_successfully
 
   taskmanager:
     image: flink:1.20.5-java17
@@ -50,5 +66,9 @@ services:
         taskmanager.numberOfTaskSlots: 4
     volumes:
       - ./flink-job/target:/opt/flink/usrlib
+      - flink-checkpoints:/tmp/flink-checkpoints
     depends_on:
       - jobmanager
+
+volumes:
+  flink-checkpoints:

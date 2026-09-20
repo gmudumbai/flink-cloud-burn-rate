@@ -18,7 +18,9 @@ Start the cluster:
 docker compose up -d
 ```
 
-Check the Flink UI at http://localhost:8081 — it should show 1 TaskManager with 4 slots.
+Check the Flink UI at http://localhost:8082 — it should show 1 TaskManager with 4 slots.
+(Mapped to host port 8082, not the usual 8081, to avoid clashing with any
+other Flink stack you might have running locally.)
 
 Create the topic before the first submit (Flink's `KafkaSource` describes the
 topic on startup, which does not trigger redpanda's auto-create — only a
@@ -121,3 +123,38 @@ LATE: +0.3400 account=100000000000 team=platform
 
 In the Flink UI, open the job → the window/aggregate operator → its
 "Watermarks" tab to see per-subtask watermarks advancing over time.
+
+## Phase 4: checkpointing and recovery
+
+Checkpointing every 10s, exactly-once mode, checkpoint storage on a
+filesystem path (`file:///tmp/flink-checkpoints`, a named Docker volume
+shared by jobmanager and taskmanager), a 5s minimum pause between
+checkpoints, and a fixed-delay restart strategy (3 attempts, 5s delay).
+State backend is still the default HashMap backend — fine at this data
+volume; RocksDB is the production choice once keyed state no longer fits
+comfortably in heap (it stores state on local disk and checkpoints
+incrementally instead of re-serializing everything each time).
+
+The Flink UI is on **http://localhost:8082** (not 8081) to avoid clashing
+with any other local Flink stack — see `docker-compose.yml`.
+
+Deviations from the plan hit along the way:
+- **Checkpoint directory permission denied on first run.** The official
+  Flink image runs as uid 9999 (`flink`), but a freshly created named
+  Docker volume is owned by root, so the very first checkpoint attempt
+  failed with `Failed to create directory for shared state: ... Operation
+  not permitted`. Fixed with a one-shot `checkpoint-perms` init container
+  that `chown`s the volume before jobmanager/taskmanager start. That
+  container also has to bypass `docker-entrypoint.sh` entirely
+  (`entrypoint: ["/bin/sh", "-c"]`) — the entrypoint always re-execs any
+  command via `gosu flink` when running as root, which would silently
+  undo the chown (root → flink → "Operation not permitted" again).
+- `RestartStrategies` and `CheckpointingMode` (the classic
+  `env.setRestartStrategy(...)` / `setCheckpointingMode(...)` APIs) are
+  deprecated in 1.20 in favor of configuring restart/checkpoint behavior
+  via `Configuration` keys, but they still work and are what the plan
+  asked for; noted here rather than switched, since the deprecated APIs
+  are simpler for a learning project and still fully functional.
+
+See `docs/recovery-demo.md` for the full kill/recover walkthrough and what
+to paste as the acceptance check.

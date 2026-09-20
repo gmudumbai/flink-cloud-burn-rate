@@ -6,9 +6,12 @@ import com.example.burnrate.model.InstanceLifecycleEvent;
 import com.example.burnrate.model.RunningRateUpdate;
 import com.example.burnrate.model.WindowDelta;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
+import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.SimpleStringSchema;
+import org.apache.flink.api.common.time.Time;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
+import org.apache.flink.streaming.api.CheckpointingMode;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -19,9 +22,10 @@ import org.apache.flink.util.OutputTag;
 import java.time.Duration;
 
 /**
- * Phase 3: event-time watermarks, a 1-minute tumbling window per account summing
- * BurnRateUpdate deltas, and a running committed hourly rate. Late events (beyond
- * the allowed lateness) are routed to a side output instead of being dropped.
+ * Phase 4 adds checkpointing/recovery on top of Phase 3's event-time watermarks,
+ * per-account 1-minute tumbling windows, and running committed hourly rate. Late
+ * events (beyond the allowed lateness) are routed to a side output instead of
+ * being dropped.
  */
 public class BurnRateJob {
 
@@ -36,8 +40,19 @@ public class BurnRateJob {
                 System.getenv().getOrDefault("WATERMARK_BOUND_SECONDS", "20"));
         long allowedLatenessSeconds = Long.parseLong(
                 System.getenv().getOrDefault("ALLOWED_LATENESS_SECONDS", "30"));
+        String checkpointDir = System.getenv().getOrDefault(
+                "CHECKPOINT_DIR", "file:///tmp/flink-checkpoints");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+
+        env.enableCheckpointing(10_000);
+        env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);
+        env.getCheckpointConfig().setCheckpointStorage(checkpointDir);
+        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(5_000);
+        // Default HashMap state backend is fine for this project's tiny state;
+        // RocksDB is the production choice once state no longer fits comfortably
+        // in heap (see README).
+        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(3, Time.seconds(5)));
 
         KafkaSource<String> source = KafkaSource.<String>builder()
                 .setBootstrapServers(bootstrapServers)
