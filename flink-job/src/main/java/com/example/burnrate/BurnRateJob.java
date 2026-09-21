@@ -3,6 +3,7 @@ package com.example.burnrate;
 import com.example.burnrate.model.BurnRateUpdate;
 import com.example.burnrate.model.CloudTrailEvent;
 import com.example.burnrate.model.InstanceLifecycleEvent;
+import com.example.burnrate.model.PriceUpdate;
 import com.example.burnrate.model.RunningRateUpdate;
 import com.example.burnrate.model.WindowDelta;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
@@ -12,6 +13,7 @@ import org.apache.flink.api.common.time.Time;
 import org.apache.flink.connector.kafka.source.KafkaSource;
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer;
 import org.apache.flink.streaming.api.CheckpointingMode;
+import org.apache.flink.streaming.api.datastream.BroadcastStream;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -22,10 +24,10 @@ import org.apache.flink.util.OutputTag;
 import java.time.Duration;
 
 /**
- * Phase 4 adds checkpointing/recovery on top of Phase 3's event-time watermarks,
- * per-account 1-minute tumbling windows, and running committed hourly rate. Late
- * events (beyond the allowed lateness) are routed to a side output instead of
- * being dropped.
+ * Phase 5 adds a broadcast stream of live pricing updates on top of Phase 4's
+ * checkpointing/recovery, Phase 3's event-time watermarks and per-account 1-minute
+ * tumbling windows, and the running committed hourly rate. Late events (beyond the
+ * allowed lateness) are routed to a side output instead of being dropped.
  */
 public class BurnRateJob {
 
@@ -36,6 +38,7 @@ public class BurnRateJob {
     public static void main(String[] args) throws Exception {
         String bootstrapServers = System.getenv().getOrDefault("KAFKA_BOOTSTRAP_SERVERS", "redpanda:9093");
         String topic = System.getenv().getOrDefault("KAFKA_TOPIC", "cloudtrail-events");
+        String pricingTopic = System.getenv().getOrDefault("KAFKA_PRICING_TOPIC", "pricing-updates");
         long watermarkBoundSeconds = Long.parseLong(
                 System.getenv().getOrDefault("WATERMARK_BOUND_SECONDS", "20"));
         long allowedLatenessSeconds = Long.parseLong(
@@ -80,9 +83,34 @@ public class BurnRateJob {
                         org.apache.flink.api.common.typeinfo.TypeInformation.of(InstanceLifecycleEvent.class))
                 .assignTimestampsAndWatermarks(instanceWatermarks);
 
+        PricingLookup pricingLookup = new PricingLookup();
+
+        KafkaSource<String> pricingSource = KafkaSource.<String>builder()
+                .setBootstrapServers(bootstrapServers)
+                .setTopics(pricingTopic)
+                .setGroupId("burn-rate-job-pricing")
+                .setStartingOffsets(OffsetsInitializer.latest())
+                .setValueOnlyDeserializer(new SimpleStringSchema())
+                .build();
+
+        DataStream<PriceUpdate> pricingUpdatesFromKafka = env
+                .fromSource(pricingSource, WatermarkStrategy.noWatermarks(), "pricing-updates-source")
+                .map(PriceUpdate::parse)
+                .returns(PriceUpdate.class);
+
+        // Seed the broadcast state from the static pricing file at job start, since
+        // the broadcast side has no guaranteed ordering against the keyed side --
+        // without this, the very first RunInstances events could race ahead of any
+        // price ever being broadcast.
+        DataStream<PriceUpdate> initialPricing = env.fromData(pricingLookup.initialPriceUpdates());
+
+        BroadcastStream<PriceUpdate> broadcastPricing = initialPricing.union(pricingUpdatesFromKafka)
+                .broadcast(ResourceLifecycleFunction.PRICING_STATE);
+
         SingleOutputStreamOperator<BurnRateUpdate> burnRateUpdates = instanceEvents
                 .keyBy(e -> e.instanceId)
-                .process(new ResourceLifecycleFunction(new PricingLookup()));
+                .connect(broadcastPricing)
+                .process(new ResourceLifecycleFunction(pricingLookup));
 
         burnRateUpdates.getSideOutput(ResourceLifecycleFunction.UNMATCHED_TERMINATIONS)
                 .map(e -> "UNMATCHED_TERMINATION " + e)

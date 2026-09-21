@@ -1,11 +1,14 @@
 package com.example.burnrate;
 
+import com.example.burnrate.model.PriceUpdate;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -46,5 +49,14 @@ public class PricingLookup implements Serializable {
             throw new IllegalArgumentException("No known price for instance type: " + instanceType);
         }
         return rate;
+    }
+
+    /** Seeds the broadcast pricing state at job start (see BurnRateJob's pricing broadcast stream). */
+    public List<PriceUpdate> initialPriceUpdates() {
+        List<PriceUpdate> updates = new ArrayList<>();
+        for (Map.Entry<String, Double> entry : hourlyRates.entrySet()) {
+            updates.add(new PriceUpdate(entry.getKey(), entry.getValue()));
+        }
+        return updates;
     }
 }

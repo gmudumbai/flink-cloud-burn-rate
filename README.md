@@ -158,3 +158,53 @@ Deviations from the plan hit along the way:
 
 See `docs/recovery-demo.md` for the full kill/recover walkthrough and what
 to paste as the acceptance check.
+
+## Phase 5 (stretch): broadcast state for live pricing updates
+
+`PricingLookup` is no longer the only source of truth for prices.
+`ResourceLifecycleFunction` is now a `KeyedBroadcastProcessFunction`: the
+keyed side is still `InstanceLifecycleEvent`s by `instanceId`; the new
+broadcast side is a `pricing-updates` Kafka topic carrying messages like
+`{"instanceType": "m5.large", "hourlyRate": 0.5}`, replicated identically
+to every parallel instance via Flink's broadcast state (`MapState<String,
+Double>`). A `RunInstances` looks up the *current* broadcast price; a
+`TerminateInstances` always subtracts the rate that was captured **at
+start time** (stored in state), never the live price — otherwise a price
+change while an instance is running would make the start and stop
+disagree and the account's running total would silently drift.
+
+Create the extra topic and rebuild/resubmit as usual:
+
+```bash
+docker compose exec redpanda rpk topic create pricing-updates
+```
+
+Push a live price change:
+
+```bash
+echo '{"instanceType":"m5.large","hourlyRate":0.5}' | docker compose exec -T redpanda rpk topic produce pricing-updates
+```
+
+Any subsequent `RunInstances` for `m5.large` will use the new rate; an
+already-running `m5.large` instance still terminates at whatever rate it
+started at.
+
+Deviations from the plan hit along the way:
+- **Broadcast state has no ordering guarantee against the keyed side.**
+  Flink does not guarantee the broadcast stream's initial values arrive
+  before the first keyed element is processed. Fixed two ways: (1) the
+  static `pricing/ec2-us-east-1.json` values are unioned into the
+  broadcast stream itself as seed events at job start
+  (`env.fromData(...)`, a bounded source that finishes after emitting —
+  you'll see it show up as a "finished" task in the job overview), and
+  (2) `ResourceLifecycleFunction` still keeps `PricingLookup` as a
+  fallback for any instance type broadcast state doesn't have a price for
+  yet, so the startup race never produces wrong output, just possibly a
+  slightly stale default for the first few milliseconds.
+- **Real bug caught by this phase, fixed in `ResourceLifecycleFunction`:**
+  before Phase 5, `TerminateInstances` re-looked-up the current price for
+  the instance's type rather than reusing the rate that was actually
+  added at `RunInstances` time. That was harmless while prices were
+  static, but would have silently corrupted the running total the moment
+  prices could change mid-flight. `RunningInstance` now stores
+  `hourlyRateAtStart`, and termination always subtracts exactly that.
