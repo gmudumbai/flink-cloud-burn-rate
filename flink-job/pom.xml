@@ -61,6 +61,40 @@
       <version>5.10.2</version>
       <scope>test</scope>
     </dependency>
+    <!-- Test harnesses for operator-level testing (KeyedBroadcastProcessOperator, etc.). -->
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-streaming-java</artifactId>
+      <version>${flink.version}</version>
+      <classifier>tests</classifier>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-core</artifactId>
+      <version>${flink.version}</version>
+      <classifier>tests</classifier>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-runtime</artifactId>
+      <version>${flink.version}</version>
+      <classifier>tests</classifier>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
+    <!-- OneShotLatch and other small test utilities used internally by the
+         operator test harnesses above, but not bundled in flink-core's own
+         test-jar. -->
+    <dependency>
+      <groupId>org.apache.flink</groupId>
+      <artifactId>flink-test-utils-junit</artifactId>
+      <version>${flink.version}</version>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
 
   <build>
